@@ -1,0 +1,38 @@
+# All logic lives in the shared reusable workflows; this file only wires them together.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    uses: HoPhan-Alphaway/shoplite-ci-workflows/.github/workflows/node-ci.yml@v1
+
+  image:
+    needs: test
+    uses: HoPhan-Alphaway/shoplite-ci-workflows/.github/workflows/docker-build-push.yml@v1
+    permissions:
+      contents: read
+      packages: write
+    with:
+      push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+
+  deploy-dev:
+    needs: image
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    uses: HoPhan-Alphaway/shoplite-ci-workflows/.github/workflows/update-gitops.yml@v1
+    with:
+      service: frontend
+      tag: ${{ needs.image.outputs.tag }}
+    secrets:
+      GITOPS_DEPLOY_KEY: ${{ secrets.GITOPS_DEPLOY_KEY }}
