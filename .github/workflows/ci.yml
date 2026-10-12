@@ -16,11 +16,11 @@ concurrency:
 
 jobs:
   test:
-    uses: HoPhan-Alphaway/shoplite-ci-workflows/.github/workflows/node-ci.yml@v1
+    uses: shoplite-lab/shoplite-ci-workflows/.github/workflows/node-ci.yml@v1
 
   image:
     needs: test
-    uses: HoPhan-Alphaway/shoplite-ci-workflows/.github/workflows/docker-build-push.yml@v1
+    uses: shoplite-lab/shoplite-ci-workflows/.github/workflows/docker-build-push.yml@v1
     permissions:
       contents: read
       packages: write
@@ -30,9 +30,9 @@ jobs:
   deploy-dev:
     needs: image
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    uses: HoPhan-Alphaway/shoplite-ci-workflows/.github/workflows/update-gitops.yml@v1
+    uses: shoplite-lab/shoplite-ci-workflows/.github/workflows/update-gitops.yml@v1
     with:
       service: frontend
       tag: ${{ needs.image.outputs.tag }}
-    secrets:
-      GITOPS_DEPLOY_KEY: ${{ secrets.GITOPS_DEPLOY_KEY }}
+    # GITOPS_DEPLOY_KEY is an organization secret: declared once in shoplite-lab, inherited here.
+    secrets: inherit
