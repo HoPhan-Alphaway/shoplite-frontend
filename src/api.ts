@@ -3,6 +3,7 @@ import { env } from './config'
 export type Product = { id: number; name: string; description: string; price: number; stock: number }
 export type Order = {
   id: number
+  productId: number
   productName: string
   quantity: number
   totalAmount: number
@@ -23,9 +24,16 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** The server asked for the same request to be retried (Retry-After), e.g. 409 in progress. */
+    public retryable = false,
   ) {
     super(message)
   }
+}
+
+/** One key per logical order intent: retries and double clicks must send the same value. */
+export function newIdempotencyKey(): string {
+  return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
 /** Every call goes through Kong. The access token is attached when the user is logged in. */
@@ -40,7 +48,11 @@ export async function api<T>(path: string, token?: string, init: RequestInit = {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
-    throw new ApiError(res.status, body?.detail ?? body?.message ?? res.statusText)
+    throw new ApiError(
+      res.status,
+      body?.detail ?? body?.message ?? res.statusText,
+      res.headers.has('Retry-After'),
+    )
   }
   return res.status === 204 ? (undefined as T) : res.json()
 }

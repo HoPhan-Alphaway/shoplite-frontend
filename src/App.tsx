@@ -1,11 +1,26 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { api, ApiError, type Notification, type Order, type Product, type Profile } from './api'
+import { api, ApiError, newIdempotencyKey, type Notification, type Order, type Product, type Profile } from './api'
 
 type Tab = 'products' | 'orders' | 'notifications' | 'profile' | 'admin'
 
 function roles(profile: unknown): string[] {
   return ((profile as { realm_access?: { roles?: string[] } })?.realm_access?.roles ?? []) as string[]
+}
+
+// A key belongs to one order intent, not to one click: sessionStorage keeps it across a reload,
+// so a retried POST after the network dropped still maps to the same order.
+function orderKey(productId: number): string {
+  const storageKey = `shoplite.idempotency.${productId}`
+  const stored = sessionStorage.getItem(storageKey)
+  if (stored) return stored
+  const key = newIdempotencyKey()
+  sessionStorage.setItem(storageKey, key)
+  return key
+}
+
+function clearOrderKey(productId: number) {
+  sessionStorage.removeItem(`shoplite.idempotency.${productId}`)
 }
 
 export default function App() {
@@ -72,19 +87,36 @@ function Products({ token }: { token?: string }) {
   const load = useCallback(() => api<Product[]>('/api/products'), [])
   const { data, error, reload } = useLoad(load)
   const [message, setMessage] = useState<string | null>(null)
+  const [busy, setBusy] = useState<number | null>(null)
 
   async function buy(p: Product) {
     setMessage(null)
+    setBusy(p.id)
     try {
       const order = await api<Order>('/api/orders', token, {
         method: 'POST',
+        headers: { 'Idempotency-Key': orderKey(p.id) },
         body: JSON.stringify({ productId: p.id, quantity: 1 }),
       })
-      setMessage(`Order #${order.id} placed: ${order.productName} ($${order.totalAmount})`)
+      if (order.status === 'PENDING') {
+        // Outcome unknown yet: keep the key, a retry must ask about this order, not create another.
+        setMessage(`Order #${order.id} is being processed. Retry in a moment or check My orders.`)
+      } else {
+        clearOrderKey(p.id)
+        setMessage(`Order #${order.id} placed: ${order.productName} ($${order.totalAmount})`)
+      }
       reload()
     } catch (e) {
-      const err = e as ApiError
-      setMessage(`Order failed (${err.status}): ${err.message}`)
+      if (!(e instanceof ApiError)) {
+        setMessage('Network error: retrying will send the same request, not a second order.')
+      } else if (e.retryable || e.status >= 500) {
+        setMessage(`Order still in flight (${e.status}): ${e.message}. Retry keeps the same request.`)
+      } else {
+        clearOrderKey(p.id)
+        setMessage(`Order failed (${e.status}): ${e.message}`)
+      }
+    } finally {
+      setBusy(null)
     }
   }
 
@@ -111,8 +143,8 @@ function Products({ token }: { token?: string }) {
               <td>${p.price}</td>
               <td>{p.stock}</td>
               <td>
-                <button disabled={!token || p.stock === 0} onClick={() => buy(p)}>
-                  {token ? 'Buy 1' : 'Login to buy'}
+                <button disabled={!token || p.stock === 0 || busy === p.id} onClick={() => buy(p)}>
+                  {busy === p.id ? 'Buying…' : token ? 'Buy 1' : 'Login to buy'}
                 </button>
               </td>
             </tr>
