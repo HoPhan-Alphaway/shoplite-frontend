@@ -9,6 +9,11 @@ RUN npm run build
 
 # nginx-unprivileged: listens on 8080 and runs as non-root (works with restricted PodSecurity).
 FROM nginxinc/nginx-unprivileged:1.30-alpine
+# Alpine base tags lag on security patches (Trivy found brotli-libs CVE-2026-111497 in 1.30-alpine).
+# Upgrade the packages as root, then drop back to the image's unprivileged uid.
+USER root
+RUN apk upgrade --no-cache
+USER 101
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --chmod=755 docker/40-env-js.sh /docker-entrypoint.d/40-env-js.sh
 COPY --from=build /src/dist /usr/share/nginx/html
